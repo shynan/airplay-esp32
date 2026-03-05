@@ -24,9 +24,28 @@ typedef struct {
   size_t pending_frame_len;
   size_t pending_frame_capacity;
   bool pending_valid;
-  // Pause tracking - freeze timing during pause
-  int64_t pause_start_time_ns;     // Local time when paused (0 = not paused)
-  int64_t total_pause_duration_ns; // Accumulated pause time to offset timing
+  // Early-frame guard: counts consecutive early frames to detect a stuck
+  // anchor. Reset whenever a new anchor is set or a late/on-time frame is
+  // played.
+  int consecutive_early_frames;
+  // Late-frame guard: counts consecutive individually-late frames.  When this
+  // exceeds MAX_CONSECUTIVE_LATE the whole buffer is considered stale (e.g.
+  // after a track skip where the anchor network_time has already passed) and a
+  // bulk flush is triggered instead of draining frame-by-frame.
+  int consecutive_late_frames;
+  // Post-seek/skip flag: set by audio_receiver_seek_flush() via
+  // audio_timing_t so that audio_timing_read plays frames immediately rather
+  // than silencing them during the phone's pre-buffer window (which can be
+  // several seconds).  Cleared automatically on the first on-time frame,
+  // matching shairport-sync's first_packet_timestamp==0 behaviour.
+  bool post_flush;
+  // Deferred flush (AirPlay 2 FLUSHBUFFERED with flushFromSeq present):
+  // keep playing until a frame with rtp_timestamp >= flush_until_ts arrives,
+  // then bulk-flush and start fresh.  Written by the RTSP task, read by the
+  // DMA callback task.  Aligned 32-bit + bool — atomic on Xtensa without a
+  // mutex (write flush_until_ts first, arm bool second; read bool first).
+  bool deferred_flush_pending;
+  uint32_t flush_until_ts;
 } audio_timing_t;
 
 void audio_timing_init(audio_timing_t *timing, size_t pending_capacity);

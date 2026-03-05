@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -165,6 +166,71 @@ void audio_receiver_set_anchor_time(uint64_t clock_id, uint64_t network_time_ns,
   if (!receiver.stream) {
     return;
   }
+
+  // Detect a seek where the buffer content is far displaced from the new
+  // anchor position.  Threshold is 5 seconds of samples — large enough to
+  // clear normal pre-buffer depth after a pause (typically 1-3 s), but
+  // small enough to catch any real seek (which displaces by the full delta
+  // from the current song position).  Both directions are checked:
+  //   rtp_ahead > threshold  → backward seek (buffer ahead of new anchor)
+  //   rtp_ahead < -threshold → forward seek (buffer behind new anchor)
+  // Long-pause resume where the anchor advances over the pre-buffer is
+  // handled by the bulk-flush path in audio_timing_read, but catching it
+  // here avoids even the first DMA callback of silence.
+  // Window size for the upper RTP gate: 10 s of samples.  Large enough that
+  // a normal 2-4 s pre-buffer passes, but small enough to reject stale frames
+  // left in the TCP socket buffer after a backward seek (which are 60+ s ahead
+  // of the new anchor when seeking back to near the start of a track).
+  int sample_rate = receiver.stream->format.sample_rate;
+  if (sample_rate <= 0) {
+    sample_rate = 44100;
+  }
+  const uint32_t gate_window = (uint32_t)(10 * sample_rate);
+
+  uint32_t oldest_rtp = 0;
+  if (audio_buffer_oldest_timestamp(&receiver.buffer, &oldest_rtp)) {
+    int32_t rtp_ahead = (int32_t)(oldest_rtp - rtp_time);
+    int32_t flush_threshold = 5 * sample_rate; // 5 seconds of samples
+    int32_t abs_ahead = rtp_ahead < 0 ? -rtp_ahead : rtp_ahead;
+    if (abs_ahead > flush_threshold) {
+      ESP_LOGI(TAG,
+               "Seek detected: oldest_rtp=%lu, new anchor rtp=%lu, "
+               "delta=%ld samples (%.1f s) — flushing stale buffer",
+               (unsigned long)oldest_rtp, (unsigned long)rtp_time,
+               (long)rtp_ahead, (float)rtp_ahead / sample_rate);
+      audio_buffer_flush(&receiver.buffer);
+      receiver.timing.playout_started = false;
+      receiver.timing.pending_valid = false;
+      receiver.timing.pending_frame_len = 0;
+      receiver.timing.ready_time_us = 0;
+      receiver.blocks_read_in_sequence = 0;
+      // Arm both RTP gates so the TCP task discards stale frames at decode
+      // time rather than letting them fill the ring buffer and trigger repeated
+      // bulk-flushes in the DMA callback.
+      // discard_before_rtp catches forward-seek stale frames (RTP < anchor).
+      // discard_above_rtp catches backward-seek stale frames (RTP >> anchor).
+      receiver.discard_before_rtp = rtp_time;
+      receiver.discard_before_rtp_valid = true;
+      receiver.discard_above_rtp = rtp_time + gate_window;
+      receiver.discard_above_rtp_valid = true;
+      receiver.arm_gate_on_next_anchor = false; // already handled
+    }
+  }
+
+  // Forward-seek path: seek_flush empties the buffer before the anchor
+  // arrives, so the oldest_rtp check above never fires. arm_gate_on_next_anchor
+  // was set by seek_flush to ensure we still arm both gates here.
+  if (receiver.arm_gate_on_next_anchor) {
+    receiver.arm_gate_on_next_anchor = false;
+    receiver.discard_before_rtp = rtp_time;
+    receiver.discard_before_rtp_valid = true;
+    receiver.discard_above_rtp = rtp_time + gate_window;
+    receiver.discard_above_rtp_valid = true;
+    ESP_LOGI(TAG,
+             "RTP gates armed on anchor: discard_before=%lu discard_above=%lu",
+             (unsigned long)rtp_time, (unsigned long)(rtp_time + gate_window));
+  }
+
   audio_timing_set_anchor(&receiver.timing, &receiver.stream->format, clock_id,
                           network_time_ns, rtp_time);
 }
@@ -359,12 +425,54 @@ bool audio_receiver_has_data(void) {
 }
 
 void audio_receiver_flush(void) {
-  // Flush is an explicit reset - clear all timing state including pause
-  // tracking The sender will provide fresh anchor times after flush
+  // Flush is an explicit reset — clear all timing state including pause
+  // tracking.  The sender will provide fresh anchor times after flush.
+  // Also disarm any pending deferred flush so it does not fire on the
+  // next track's frames.
   audio_buffer_flush(&receiver.buffer);
   audio_timing_reset(&receiver.timing);
 
+  receiver.discard_before_rtp_valid = false;
+  receiver.discard_above_rtp_valid = false;
+  receiver.arm_gate_on_next_anchor = false;
   receiver.blocks_read_in_sequence = 1;
+}
+
+void audio_receiver_seek_flush(void) {
+  // Mid-stream seek flush (FLUSH / immediate FLUSHBUFFERED).  Like
+  // audio_receiver_flush() but sets timing.post_flush so audio_timing_read
+  // plays frames immediately after the seek instead of silencing them while
+  // the anchor's pre-buffer window (several seconds) elapses.
+  // Also disarms any pending deferred flush (audio_timing_reset clears it).
+  audio_receiver_flush();
+  receiver.timing.post_flush = true;
+  // Request that the RTP gate be armed as soon as the next anchor arrives.
+  // This covers the forward-seek case where the buffer is already empty by
+  // the time SETRATEANCHORTIME arrives, so the seek-detection heuristic
+  // (which needs oldest_rtp from the buffer) would otherwise miss arming it.
+  receiver.arm_gate_on_next_anchor = true;
+}
+
+void audio_receiver_set_deferred_flush(uint32_t flush_until_ts) {
+  if (!receiver.stream) {
+    return;
+  }
+  // Write flush_until_ts before arming the flag so audio_timing_read never
+  // sees deferred_flush_pending=true with a stale timestamp.
+  receiver.timing.flush_until_ts = flush_until_ts;
+  receiver.timing.deferred_flush_pending = true;
+  ESP_LOGI(TAG, "Deferred flush armed: flush_until_ts=%" PRIu32,
+           flush_until_ts);
+}
+
+void audio_receiver_pause(void) {
+  // Stop the consumer.  The receiver tasks keep running so the audio buffer
+  // continues to fill with pre-buffered audio — TCP back-pressure naturally
+  // throttles the sender.  On resume the phone sends a fresh
+  // SETRATEANCHORTIME anchor that re-aligns the buffered frames to the
+  // correct wall-clock position; no flush or offset compensation is needed.
+  audio_timing_set_playing(&receiver.timing, false);
+  receiver.blocks_read_in_sequence = 0;
 }
 
 uint16_t audio_receiver_get_buffered_port(void) {

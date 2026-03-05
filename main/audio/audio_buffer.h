@@ -23,25 +23,12 @@ typedef struct __attribute__((packed)) {
   uint8_t reserved;
 } audio_frame_header_t;
 
-// ESP32S3 can access 8M SPIRAM directly
-// Others require himem API to use. See
-// https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/himem.html
-// Reduce buffers for non-s3 targets
-#ifdef CONFIG_IDF_TARGET_ESP32S3
-#define MAX_RING_BUFFER_FRAMES 5000
-#else
-#define MAX_RING_BUFFER_FRAMES 1000
-#endif
+#define MAX_RING_BUFFER_FRAMES 500
 #define BYTES_PER_FRAME                                          \
   ((size_t)sizeof(audio_frame_header_t) +                        \
    ((size_t)AAC_FRAMES_PER_PACKET * (size_t)AUDIO_MAX_CHANNELS * \
     (size_t)AUDIO_BYTES_PER_SAMPLE))
 #define AUDIO_BUFFER_SIZE (MAX_RING_BUFFER_FRAMES * BYTES_PER_FRAME)
-#ifdef CONFIG_IDF_TARGET_ESP32S3
-#define MAX_BUFFER_FRAMES 5000
-#else
-#define MAX_BUFFER_FRAMES 1000
-#endif
 
 typedef struct {
   uint8_t *pool;                // Pre-allocated frame data in PSRAM
@@ -71,3 +58,8 @@ int16_t *audio_buffer_get_decode_buffer(audio_buffer_t *buffer,
 bool audio_buffer_queue_decoded(audio_buffer_t *buffer, audio_stats_t *stats,
                                 uint32_t timestamp, const int16_t *pcm_data,
                                 size_t samples, int channels);
+/**
+ * Peek at the RTP timestamp of the oldest (lowest-timestamp) frame in the
+ * buffer without removing it.  Returns false if the buffer is empty.
+ */
+bool audio_buffer_oldest_timestamp(audio_buffer_t *buffer, uint32_t *timestamp);

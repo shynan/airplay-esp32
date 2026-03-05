@@ -1,6 +1,6 @@
 if DAC_TAS57XX
     
-    config DAC_MAX_VOLUME
+    config TAS57XX_MAX_VOLUME
         int "Maximum DAC volume (dB)"
         range -100 0
         default -30
