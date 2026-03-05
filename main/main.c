@@ -14,6 +14,7 @@
 
 #ifdef CONFIG_BT_A2DP_ENABLE
 #include "a2dp_sink.h"
+#include "rtsp_events.h"
 #endif
 
 #include "iot_board.h"
@@ -58,6 +59,10 @@ static void start_airplay_services(void) {
 
   s_airplay_started = true;
   ESP_LOGI(TAG, "AirPlay ready");
+
+#ifdef CONFIG_BT_A2DP_ENABLE
+  bt_a2dp_sink_set_discoverable(false);
+#endif
 }
 
 static void stop_airplay_services(void) {
@@ -68,10 +73,14 @@ static void stop_airplay_services(void) {
   ESP_LOGI(TAG, "Stopping AirPlay services...");
 
   rtsp_server_stop();
-  // audio_output_stop() is called by bt_a2dp_sink on connect
+  audio_output_stop();
 
   s_airplay_started = false;
   ESP_LOGI(TAG, "AirPlay stopped");
+
+#ifdef CONFIG_BT_A2DP_ENABLE
+  bt_a2dp_sink_set_discoverable(true);
+#endif
 }
 
 static void wifi_monitor_task(void *pvParameters) {
@@ -120,6 +129,28 @@ static void on_bt_state_changed(bool connected) {
     if (wifi_is_connected()) {
       start_airplay_services();
     }
+  }
+}
+
+static void on_airplay_client_event(rtsp_event_t event,
+                                    const rtsp_event_data_t *data,
+                                    void *user_data) {
+  (void)data;
+  (void)user_data;
+  if (bt_a2dp_sink_is_connected()) {
+    return;
+  }
+  switch (event) {
+  case RTSP_EVENT_CLIENT_CONNECTED:
+    ESP_LOGI(TAG, "AirPlay client connected — disabling BT");
+    bt_a2dp_sink_set_discoverable(false);
+    break;
+  case RTSP_EVENT_DISCONNECTED:
+    ESP_LOGI(TAG, "AirPlay client disconnected — enabling BT");
+    bt_a2dp_sink_set_discoverable(true);
+    break;
+  default:
+    break;
   }
 }
 #endif
@@ -174,6 +205,8 @@ void app_main(void) {
     esp_err_t bt_err = bt_a2dp_sink_init(bt_name, on_bt_state_changed);
     if (bt_err != ESP_OK) {
       ESP_LOGE(TAG, "BT A2DP init failed: %s", esp_err_to_name(bt_err));
+    } else {
+      rtsp_events_register(on_airplay_client_event, NULL);
     }
   }
 #endif

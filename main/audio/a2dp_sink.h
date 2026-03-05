@@ -36,3 +36,12 @@ esp_err_t bt_a2dp_sink_init(const char *device_name,
  * Check if a Bluetooth A2DP audio session is active.
  */
 bool bt_a2dp_sink_is_connected(void);
+
+/**
+ * Enable or disable Bluetooth discoverability/connectability.
+ * Saves the desired state — applied immediately if BT is running,
+ * or deferred until the next bt_a2dp_sink_start().
+ *
+ * @param discoverable true to allow new BT connections, false to block them
+ */
+void bt_a2dp_sink_set_discoverable(bool discoverable);

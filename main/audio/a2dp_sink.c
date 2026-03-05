@@ -95,6 +95,7 @@ static bt_a2dp_state_cb_t s_state_cb = NULL;
 static volatile bool s_connected = false;
 static volatile bool s_audio_started = false;
 static volatile bool s_i2s_task_running = false;
+static bool s_bt_discoverable = true;
 static uint8_t s_avrc_volume = 127; /* 0-127, AVRCP absolute volume */
 
 static RingbufHandle_t s_ringbuf = NULL;
@@ -283,13 +284,12 @@ static void bt_a2dp_evt_handler(uint16_t event, void *param) {
       ESP_LOGI(TAG, "A2DP connected");
       s_connected = true;
 
-      // Notify main app to disable AirPlay
+      // Notify main app to disable AirPlay (stops playback task + RTSP)
       if (s_state_cb) {
         s_state_cb(true);
       }
 
-      // Stop AirPlay playback, start BT playback
-      audio_output_stop();
+      // Start BT playback
       i2s_task_start();
 
       // LED/display: show connected state
@@ -305,20 +305,18 @@ static void bt_a2dp_evt_handler(uint16_t event, void *param) {
       s_connected = false;
       s_audio_started = false;
 
-      // Stop BT playback, restart AirPlay playback
+      // Stop BT playback
       i2s_task_stop();
-      audio_output_start();
 
       // LED/display: show disconnected state
       rtsp_events_emit(RTSP_EVENT_DISCONNECTED, NULL);
 
-      // Notify main app to re-enable AirPlay
+      // Notify main app to re-enable AirPlay (restarts playback + RTSP)
       if (s_state_cb) {
         s_state_cb(false);
       }
 
-      // Re-enable discoverable
-      esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+      // Discoverable state is managed by main via set_discoverable()
 
       // Persist the last-used volume so it is restored on next connect
       settings_set_bt_volume(s_avrc_volume);
@@ -566,7 +564,7 @@ static void bt_gap_cb(esp_bt_gap_cb_event_t event,
 }
 
 /* ========================================================================== */
-/* Stack-up handler — called once when Bluedroid is ready                     */
+/* Stack-up handler — called when Bluedroid is (re-)enabled                   */
 /* ========================================================================== */
 
 static void bt_stack_evt_handler(uint16_t event, void *param) {
@@ -603,8 +601,12 @@ static void bt_stack_evt_handler(uint16_t event, void *param) {
   esp_a2d_sink_register_data_callback(bt_a2dp_data_cb);
   esp_a2d_sink_init();
 
-  // Make discoverable and connectable
-  esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+  // Apply saved discoverable state
+  if (s_bt_discoverable) {
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+  } else {
+    esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE, ESP_BT_NON_DISCOVERABLE);
+  }
 
   // Restore saved BT volume (falls back to 127 / 0 dB if none stored)
   {
@@ -687,4 +689,18 @@ esp_err_t bt_a2dp_sink_init(const char *device_name,
 
 bool bt_a2dp_sink_is_connected(void) {
   return s_connected;
+}
+
+void bt_a2dp_sink_set_discoverable(bool discoverable) {
+  s_bt_discoverable = discoverable;
+  if (s_connected) {
+    return;
+  }
+  if (discoverable) {
+    ESP_LOGI(TAG, "BT discoverable enabled");
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+  } else {
+    ESP_LOGI(TAG, "BT discoverable disabled");
+    esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE, ESP_BT_NON_DISCOVERABLE);
+  }
 }
