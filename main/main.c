@@ -2,6 +2,7 @@
 #include "audio_receiver.h"
 #include "display.h"
 #include "dns_server.h"
+#include "ethernet.h"
 #include "led.h"
 #include "hap.h"
 #include "mdns_airplay.h"
@@ -75,39 +76,59 @@ static void stop_airplay_services(void) {
   ESP_LOGI(TAG, "AirPlay stopped");
 }
 
-static void wifi_monitor_task(void *pvParameters) {
-  bool was_connected = wifi_is_connected();
-  bool dns_running = !was_connected;
+static void network_monitor_task(void *pvParameters) {
+  (void)pvParameters;
+  bool had_network = ethernet_is_connected() || wifi_is_connected();
+  bool dns_running = !had_network;
+  bool wifi_sta_active = false;
 
-  // Start captive portal DNS if not connected
+  // Start captive portal DNS if no network yet
   if (dns_running) {
     dns_server_start(AP_IP_ADDR);
+  }
+
+  // If ethernet is not connected and we have WiFi credentials, start STA
+  if (!ethernet_is_connected() && settings_has_wifi_credentials()) {
+    ESP_LOGI(TAG, "No ethernet — enabling WiFi STA");
+    wifi_start_sta();
+    wifi_sta_active = true;
   }
 
   while (1) {
     vTaskDelay(pdMS_TO_TICKS(2000));
 
-    bool connected = wifi_is_connected();
-    if (connected == was_connected) {
+    bool eth_up = ethernet_is_connected();
+    bool wifi_up = wifi_is_connected();
+    bool has_network = eth_up || wifi_up;
+
+    // Auto-enable WiFi STA if ethernet drops
+    if (!eth_up && !wifi_sta_active && settings_has_wifi_credentials()) {
+      ESP_LOGI(TAG, "Ethernet down — enabling WiFi STA as fallback");
+      wifi_start_sta();
+      wifi_sta_active = true;
+    }
+
+    if (has_network == had_network) {
       continue;
     }
 
-    if (connected) {
-      ESP_LOGI(TAG, "WiFi connected");
+    if (has_network) {
+      ESP_LOGI(TAG, "Network up (eth=%s, wifi=%s)", eth_up ? "yes" : "no",
+               wifi_up ? "yes" : "no");
       start_airplay_services();
       if (dns_running) {
         dns_server_stop();
         dns_running = false;
       }
     } else {
-      ESP_LOGW(TAG, "WiFi disconnected");
+      ESP_LOGW(TAG, "All network interfaces down");
       if (!dns_running) {
         dns_server_start(AP_IP_ADDR);
         dns_running = true;
       }
     }
 
-    was_connected = connected;
+    had_network = has_network;
   }
 }
 
@@ -118,7 +139,7 @@ static void on_bt_state_changed(bool connected) {
     stop_airplay_services();
   } else {
     ESP_LOGI(TAG, "BT disconnected — re-enabling AirPlay");
-    if (wifi_is_connected()) {
+    if (ethernet_is_connected() || wifi_is_connected()) {
       start_airplay_services();
     }
   }
@@ -160,37 +181,65 @@ void app_main(void) {
   led_init();
   display_init();
 
-  // Initialize board-specific hardware
+  // Initialize board-specific hardware (includes SPI bus for ethernet)
   ESP_LOGI(TAG, "Board: %s", iot_board_get_info());
   esp_err_t err = iot_board_init();
   if (err != ESP_OK) {
     ESP_LOGE(TAG, "Board init failed: %s", esp_err_to_name(err));
   }
 
-  // Start WiFi (APSTA mode: AP for config, STA for connection)
-  wifi_init_apsta(NULL, NULL);
-
-  // Wait for initial connection if credentials exist
-  bool connected = false;
-  if (settings_has_wifi_credentials()) {
-    connected = wifi_wait_connected(30000);
+  // Try ethernet first
+  bool eth_available = false;
+  err = ethernet_init();
+  if (err == ESP_OK) {
+    // Wait for ethernet link + DHCP (up to 5s for link, then 10s more for DHCP)
+    ESP_LOGI(TAG, "Waiting for ethernet...");
+    for (int i = 0; i < 25 && !ethernet_is_link_up(); i++) {
+      vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    if (ethernet_is_link_up() && !ethernet_is_connected()) {
+      ESP_LOGI(TAG, "Ethernet link up, waiting for DHCP...");
+      for (int i = 0; i < 50 && !ethernet_is_connected(); i++) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+      }
+    }
+    eth_available = ethernet_is_connected();
+    if (eth_available) {
+      ESP_LOGI(TAG, "Ethernet connected");
+    } else {
+      ESP_LOGI(TAG, "Ethernet not connected (cable?), will use WiFi");
+    }
+  } else if (err != ESP_ERR_NOT_SUPPORTED) {
+    ESP_LOGW(TAG, "Ethernet init failed: %s", esp_err_to_name(err));
   }
 
-  if (!connected) {
-    ESP_LOGI(TAG, "Connect to 'ESP32-AirPlay-Setup' -> http://192.168.4.1");
+  // Start WiFi: AP-only if ethernet is up, full APSTA if no ethernet
+  if (eth_available) {
+    wifi_init_ap_only(NULL, NULL);
+  } else {
+    wifi_init_apsta(NULL, NULL);
+
+    // Wait for initial WiFi connection if credentials exist
+    if (settings_has_wifi_credentials()) {
+      if (!wifi_wait_connected(30000)) {
+        ESP_LOGI(TAG, "Connect to 'ESP32-AirPlay-Setup' -> http://192.168.4.1");
+      }
+    } else {
+      ESP_LOGI(TAG, "Connect to 'ESP32-AirPlay-Setup' -> http://192.168.4.1");
+    }
   }
 
-  // Start services
+  // Start services that work on any interface
   web_server_start(80);
-  xTaskCreate(wifi_monitor_task, "wifi_mon", 4096, NULL, 5, NULL);
+  xTaskCreate(network_monitor_task, "net_mon", 4096, NULL, 5, NULL);
 
+  bool connected = eth_available || wifi_is_connected();
   if (connected) {
     start_airplay_services();
   }
 
 #ifdef CONFIG_BT_A2DP_ENABLE
   // Initialize Bluetooth A2DP Sink
-  // Uses settings device name as the BT visible name
   {
     char bt_name[65];
     settings_get_device_name(bt_name, sizeof(bt_name));

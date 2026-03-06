@@ -9,6 +9,7 @@
 
 #include "settings.h"
 #include "wifi.h"
+#include "ethernet.h"
 #include "ota.h"
 #include "rtsp_server.h"
 #include "freertos/FreeRTOS.h"
@@ -204,8 +205,10 @@ static const char *HTML_CONTROL_PANEL =
     "  try{var r=await fetch('/api/system/info');var d=await r.json();\n"
     "    if(d.success){var i=d.info;var "
     "b=document.getElementById('status-bar');\n"
-    "      if(i.wifi_connected){b.className='status-bar "
-    "ok';b.innerHTML='Connected to WiFi: '+i.ip;}\n"
+    "      if(i.eth_connected){b.className='status-bar "
+    "ok';b.innerHTML='Ethernet: '+i.ip;}\n"
+    "      else if(i.wifi_connected){b.className='status-bar "
+    "ok';b.innerHTML='WiFi: '+i.ip;}\n"
     "      else{b.className='status-bar err';b.innerHTML='Not connected - "
     "Configure WiFi below';}\n"
     "      document.getElementById('info-ip').textContent=i.ip||'-';\n"
@@ -421,8 +424,14 @@ static esp_err_t system_info_handler(httpd_req_t *req) {
   char mac_str[18] = {0};
   char device_name[65] = {0};
   bool wifi_connected = wifi_is_connected();
+  bool eth_connected = ethernet_is_connected();
 
-  wifi_get_ip_str(ip_str, sizeof(ip_str));
+  // Prefer ethernet IP if connected, otherwise fall back to wifi
+  if (eth_connected) {
+    ethernet_get_ip_str(ip_str, sizeof(ip_str));
+  } else {
+    wifi_get_ip_str(ip_str, sizeof(ip_str));
+  }
   wifi_get_mac_str(mac_str, sizeof(mac_str));
   settings_get_device_name(device_name, sizeof(device_name));
 
@@ -430,6 +439,7 @@ static esp_err_t system_info_handler(httpd_req_t *req) {
   cJSON_AddStringToObject(info, "mac", mac_str);
   cJSON_AddStringToObject(info, "device_name", device_name);
   cJSON_AddBoolToObject(info, "wifi_connected", wifi_connected);
+  cJSON_AddBoolToObject(info, "eth_connected", eth_connected);
   cJSON_AddNumberToObject(info, "free_heap", esp_get_free_heap_size());
 
   cJSON_AddItemToObject(json, "info", info);

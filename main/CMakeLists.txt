@@ -35,6 +35,7 @@ set( SRC_FILES
     "network/web_server.c"
     "network/ota.c"
     "network/dns_server.c"
+    "network/ethernet.c"
     "led.c"
     "audio/eq_events.c"
 )
@@ -77,6 +78,7 @@ set( DEPS
     boards
     dac
     display
+    esp_eth
 )
 
 # Bluetooth component only needed when A2DP is enabled
