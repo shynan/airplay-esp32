@@ -35,7 +35,6 @@ set( SRC_FILES
     "network/web_server.c"
     "network/ota.c"
     "network/dns_server.c"
-    "network/ethernet.c"
     "led.c"
     "audio/eq_events.c"
 )
@@ -50,6 +49,11 @@ endif()
 # Bluetooth A2DP sink (only available on ESP32 with Classic BT)
 if(CONFIG_BT_A2DP_ENABLE)
     list(APPEND SRC_FILES "audio/a2dp_sink.c")
+endif()
+
+# W5500 SPI Ethernet
+if(CONFIG_ETH_W5500_ENABLED)
+    list(APPEND SRC_FILES "network/ethernet.c")
 endif()
 
 set( INC_DIRS
@@ -78,12 +82,16 @@ set( DEPS
     boards
     dac
     display
-    esp_eth
 )
 
 # Bluetooth component only needed when A2DP is enabled
 if(CONFIG_BT_A2DP_ENABLE)
     list(APPEND DEPS bt)
+endif()
+
+# Ethernet component only needed when W5500 is enabled
+if(CONFIG_ETH_W5500_ENABLED)
+    list(APPEND DEPS esp_eth)
 endif()
 
 idf_component_register(

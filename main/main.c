@@ -61,7 +61,7 @@ static void start_airplay_services(void) {
   s_airplay_started = true;
   ESP_LOGI(TAG, "AirPlay ready");
 }
-
+#ifdef CONFIG_BT_A2DP_ENABLE
 static void stop_airplay_services(void) {
   if (!s_airplay_started) {
     return;
@@ -75,23 +75,17 @@ static void stop_airplay_services(void) {
   s_airplay_started = false;
   ESP_LOGI(TAG, "AirPlay stopped");
 }
+#endif
 
 static void network_monitor_task(void *pvParameters) {
   (void)pvParameters;
   bool had_network = ethernet_is_connected() || wifi_is_connected();
   bool dns_running = !had_network;
-  bool wifi_sta_active = false;
+  bool wifi_started = wifi_is_connected() || !ethernet_is_connected();
 
   // Start captive portal DNS if no network yet
   if (dns_running) {
     dns_server_start(AP_IP_ADDR);
-  }
-
-  // If ethernet is not connected and we have WiFi credentials, start STA
-  if (!ethernet_is_connected() && settings_has_wifi_credentials()) {
-    ESP_LOGI(TAG, "No ethernet — enabling WiFi STA");
-    wifi_start_sta();
-    wifi_sta_active = true;
   }
 
   while (1) {
@@ -101,11 +95,11 @@ static void network_monitor_task(void *pvParameters) {
     bool wifi_up = wifi_is_connected();
     bool has_network = eth_up || wifi_up;
 
-    // Auto-enable WiFi STA if ethernet drops
-    if (!eth_up && !wifi_sta_active && settings_has_wifi_credentials()) {
-      ESP_LOGI(TAG, "Ethernet down — enabling WiFi STA as fallback");
-      wifi_start_sta();
-      wifi_sta_active = true;
+    // If ethernet dropped and WiFi was never started, bring up WiFi now
+    if (!eth_up && !wifi_started) {
+      ESP_LOGI(TAG, "Ethernet down — starting WiFi as fallback");
+      wifi_init_apsta(NULL, NULL);
+      wifi_started = true;
     }
 
     if (has_network == had_network) {
@@ -213,10 +207,8 @@ void app_main(void) {
     ESP_LOGW(TAG, "Ethernet init failed: %s", esp_err_to_name(err));
   }
 
-  // Start WiFi: AP-only if ethernet is up, full APSTA if no ethernet
-  if (eth_available) {
-    wifi_init_ap_only(NULL, NULL);
-  } else {
+  // Start WiFi only if ethernet is not available
+  if (!eth_available) {
     wifi_init_apsta(NULL, NULL);
 
     // Wait for initial WiFi connection if credentials exist
@@ -227,6 +219,8 @@ void app_main(void) {
     } else {
       ESP_LOGI(TAG, "Connect to 'ESP32-AirPlay-Setup' -> http://192.168.4.1");
     }
+  } else {
+    ESP_LOGI(TAG, "Ethernet connected — skipping WiFi");
   }
 
   // Start services that work on any interface

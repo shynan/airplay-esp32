@@ -1,12 +1,12 @@
+#include "sdkconfig.h"
+
+#ifdef CONFIG_ETH_W5500_ENABLED
+
 #include "ethernet.h"
 
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "sdkconfig.h"
-
-#ifdef CONFIG_ETH_W5500_ENABLED
-
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_eth.h"
@@ -61,13 +61,6 @@ static void eth_got_ip_handler(void *arg, esp_event_base_t event_base,
     ESP_LOGI(TAG, "Ethernet got IP: " IPSTR, IP2STR(&event->ip_info.ip));
     s_eth_connected = true;
   }
-}
-
-static void eth_lost_ip_handler(void *arg, esp_event_base_t event_base,
-                                int32_t event_id, void *event_data) {
-  (void)arg;
-  // IP_EVENT_ETH_LOST_IP doesn't exist in all IDF versions,
-  // but we handle disconnection via ETHERNET_EVENT_DISCONNECTED
 }
 
 esp_err_t ethernet_init(void) {
@@ -214,33 +207,6 @@ void ethernet_get_mac_str(char *mac_str, size_t len) {
     snprintf(mac_str, len, "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1],
              mac[2], mac[3], mac[4], mac[5]);
   } else {
-    mac_str[0] = '\0';
-  }
-}
-
-#else // !CONFIG_ETH_W5500_ENABLED
-
-esp_err_t ethernet_init(void) {
-  return ESP_ERR_NOT_SUPPORTED;
-}
-
-bool ethernet_is_connected(void) {
-  return false;
-}
-
-bool ethernet_is_link_up(void) {
-  return false;
-}
-
-esp_err_t ethernet_get_ip_str(char *ip_str, size_t len) {
-  if (ip_str && len > 0) {
-    ip_str[0] = '\0';
-  }
-  return ESP_ERR_NOT_SUPPORTED;
-}
-
-void ethernet_get_mac_str(char *mac_str, size_t len) {
-  if (mac_str && len > 0) {
     mac_str[0] = '\0';
   }
 }
