@@ -403,13 +403,25 @@ static void handle_get(int socket, rtsp_conn_t *conn, const rtsp_request_t *req,
     plist_array_end(&p);
 
     // Audio latencies array
+    // Type 96 (realtime/UDP): PTP sync + internal hardware compensation
+    // means audio exits the speaker at the correct wall-clock time;
+    // reporting additional latency would cause the sender to over-delay video.
+    // Type 103 (buffered/TCP): no timestamp-based scheduling, so the full
+    // jitter-buffer depth + hardware pipeline delay applies.
     plist_dict_array_begin(&p, "audioLatencies");
     plist_dict_begin(&p);
     plist_dict_int(&p, "type", 96);
     plist_dict_int(&p, "audioType", 0x64);
     plist_dict_int(&p, "inputLatencyMicros", 0);
+    plist_dict_int(&p, "outputLatencyMicros", 0);
+    plist_dict_end(&p);
+    plist_dict_begin(&p);
+    plist_dict_int(&p, "type", 103);
+    plist_dict_int(&p, "audioType", 0x64);
+    plist_dict_int(&p, "inputLatencyMicros", 0);
     plist_dict_int(&p, "outputLatencyMicros",
-                   audio_receiver_get_output_latency_us());
+                   audio_receiver_get_output_latency_us() +
+                       audio_receiver_get_hardware_latency_us());
     plist_dict_end(&p);
     plist_array_end(&p);
 
@@ -1002,12 +1014,10 @@ static void handle_record(int socket, rtsp_conn_t *conn,
   conn->stream_paused = false;
   rtsp_events_emit(RTSP_EVENT_PLAYING, NULL);
 
+  // AirPlay 1 RECORD is always type 96 (realtime/UDP) with NTP sync.
+  // Internal timing already compensates for hardware latency, so report 0.
   char headers[128];
-  uint32_t output_latency_us = audio_receiver_get_output_latency_us();
-  int sample_rate = conn->sample_rate > 0 ? conn->sample_rate : 44100;
-  uint32_t latency_samples =
-      (uint32_t)(((uint64_t)output_latency_us * (uint64_t)sample_rate) /
-                 1000000ULL);
+  uint32_t latency_samples = 0;
   snprintf(headers, sizeof(headers),
            "Audio-Latency: %" PRIu32 "\r\n"
            "Audio-Jack-Status: connected\r\n",
