@@ -68,7 +68,7 @@ board_res_handle_t iot_board_get_handle(int id) {
 #ifdef CONFIG_ETH_W5500_ENABLED
   case BOARD_SPI2_ID:
     return s_spi_bus_initialized ? (board_res_handle_t)(intptr_t)BOARD_SPI_HOST
-                                : NULL;
+                                 : NULL;
 #endif
   default:
     return NULL;

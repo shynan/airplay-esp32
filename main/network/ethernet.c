@@ -157,9 +157,8 @@ esp_err_t ethernet_init(void) {
   uint8_t eth_mac[6];
   esp_read_mac(eth_mac, ESP_MAC_ETH);
   esp_eth_ioctl(s_eth_handle, ETH_CMD_S_MAC_ADDR, eth_mac);
-  ESP_LOGI(TAG, "Ethernet MAC: %02X:%02X:%02X:%02X:%02X:%02X",
-           eth_mac[0], eth_mac[1], eth_mac[2], eth_mac[3], eth_mac[4],
-           eth_mac[5]);
+  ESP_LOGI(TAG, "Ethernet MAC: %02X:%02X:%02X:%02X:%02X:%02X", eth_mac[0],
+           eth_mac[1], eth_mac[2], eth_mac[3], eth_mac[4], eth_mac[5]);
 
   // Attach netif glue
   esp_eth_netif_glue_handle_t glue = esp_eth_new_netif_glue(s_eth_handle);
