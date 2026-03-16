@@ -40,7 +40,7 @@
 #include <string.h>
 
 #define TAG           "audio_spdif"
-#define OUTPUT_RATE   CONFIG_OUTPUT_OUTPUT_RATE_HZ
+#define OUTPUT_RATE   CONFIG_OUTPUT_SAMPLE_RATE_HZ
 #define FRAME_SAMPLES 352
 
 /* Max output frames after resampling one input frame */
