@@ -4,21 +4,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /**
  * Initialize the audio resampler.
  *
  * @param input_rate   Source sample rate (e.g. 44100)
  * @param output_rate  Target sample rate (e.g. 48000)
  * @param channels     Number of channels (2 for stereo)
- * @param quality      Filter size (taps and filters), e.g. 48
  * @return true on success
  */
 bool audio_resample_init(uint32_t input_rate, uint32_t output_rate,
-                         int channels, int quality);
+                         int channels);
 
 /**
  * Resample a block of interleaved int16_t PCM.
@@ -51,7 +46,3 @@ void audio_resample_destroy(void);
  * Get the maximum number of output frames for a given input frame count.
  */
 size_t audio_resample_max_output(size_t in_frames);
-
-#ifdef __cplusplus
-}
-#endif
