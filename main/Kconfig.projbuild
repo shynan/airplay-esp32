@@ -164,6 +164,14 @@ menu "Airplay ESP Configuration"
     menu "Bluetooth Configuration"
         depends on BT_A2DP_ENABLE
 
+        config BT_ONLY_MODE
+            bool "Bluetooth-only mode (disable AirPlay)"
+            default n
+            help
+                Disable AirPlay and only use Bluetooth A2DP.
+                Useful for testing Bluetooth without AirPlay interference.
+                When enabled, WiFi is not started and only Bluetooth is available.
+
         config BT_PIN_CODE
             string "Bluetooth pairing PIN code"
             default "05032026"

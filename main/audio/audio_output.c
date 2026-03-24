@@ -68,7 +68,6 @@ static void playback_task(void *arg) {
     return;
   }
 
-  size_t written;
   while (playback_running) {
     if (resample_reinit_needed) {
       resample_reinit_needed = false;
@@ -91,13 +90,12 @@ static void playback_task(void *arg) {
       }
       apply_volume(play_buf, play_samples * 2);
       led_audio_feed(play_buf, play_samples);
-      i2s_channel_write(tx_handle, play_buf, play_samples * 4, &written,
-                        portMAX_DELAY);
+      // Use audio_output_write to handle mode-switching gracefully
+      audio_output_write(play_buf, play_samples * 4, portMAX_DELAY);
       taskYIELD();
     } else {
       led_audio_feed(silence, FRAME_SAMPLES);
-      i2s_channel_write(tx_handle, silence, (size_t)FRAME_SAMPLES * 4, &written,
-                        pdMS_TO_TICKS(10));
+      audio_output_write(silence, (size_t)FRAME_SAMPLES * 4, pdMS_TO_TICKS(10));
       vTaskDelay(1);
     }
   }
@@ -179,7 +177,12 @@ void audio_output_stop(void) {
 
 esp_err_t audio_output_write(const void *data, size_t bytes, TickType_t wait) {
   size_t written = 0;
-  return i2s_channel_write(tx_handle, data, bytes, &written, wait);
+  esp_err_t err = i2s_channel_write(tx_handle, data, bytes, &written, wait);
+  // Suppress expected errors during mode switching (I2S disabled temporarily)
+  if (err == ESP_ERR_INVALID_STATE) {
+    return ESP_OK; // Silently ignore - happens during AirPlay/BT switch
+  }
+  return err;
 }
 
 void audio_output_set_sample_rate(uint32_t rate) {

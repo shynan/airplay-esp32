@@ -96,6 +96,8 @@ static volatile bool s_connected = false;
 static volatile bool s_audio_started = false;
 static volatile bool s_i2s_task_running = false;
 static bool s_bt_discoverable = true;
+static bool s_bt_enabled = true;           // Track if BT controller is enabled
+static char s_bt_device_name[65] = {0};    // Store device name for re-init
 static uint8_t s_avrc_volume = 127; /* 0-127, AVRCP absolute volume */
 
 static RingbufHandle_t s_ringbuf = NULL;
@@ -590,12 +592,14 @@ static void bt_stack_evt_handler(uint16_t event, void *param) {
   esp_bt_gap_register_callback(bt_gap_cb);
 
 #ifdef CONFIG_BT_SSP_ENABLED
-  // Secure Simple Pairing — numeric comparison for BT 2.1+ devices
+  // Secure Simple Pairing — Just Works mode (no user interaction needed)
+  // ESP_BT_IO_CAP_NONE = device has no input/output capability
+  // This makes pairing automatic, like typical Bluetooth speakers
   esp_bt_sp_param_t param_type = ESP_BT_SP_IOCAP_MODE;
-  esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_IO;
+  esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_NONE;
   esp_bt_gap_set_security_param(param_type, &iocap, sizeof(uint8_t));
-#endif
-
+  ESP_LOGI(TAG, "SSP enabled: Just Works mode (no PIN required)");
+#else
   // Legacy Pairing — fixed PIN from Kconfig
   esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_FIXED;
   esp_bt_pin_code_t pin_code;
@@ -607,6 +611,7 @@ static void bt_stack_evt_handler(uint16_t event, void *param) {
   memcpy(pin_code, pin_str, pin_len);
   esp_bt_gap_set_pin(pin_type, pin_len, pin_code);
   ESP_LOGI(TAG, "BT PIN set (%d digits)", pin_len);
+#endif
 
   // AVRC Controller (to get metadata from source)
   esp_avrc_ct_register_callback(bt_avrc_ct_cb);
@@ -653,6 +658,10 @@ static void bt_stack_evt_handler(uint16_t event, void *param) {
 esp_err_t bt_a2dp_sink_init(const char *device_name,
                             bt_a2dp_state_cb_t state_cb) {
   s_state_cb = state_cb;
+
+  // Store device name for potential re-init
+  strncpy(s_bt_device_name, device_name, sizeof(s_bt_device_name) - 1);
+  s_bt_device_name[sizeof(s_bt_device_name) - 1] = '\0';
 
   ESP_LOGI(TAG, "Initializing Bluetooth A2DP Sink: %s", device_name);
 
@@ -729,4 +738,58 @@ void bt_a2dp_sink_set_discoverable(bool discoverable) {
     ESP_LOGI(TAG, "BT discoverable disabled");
     esp_bt_gap_set_scan_mode(ESP_BT_NON_CONNECTABLE, ESP_BT_NON_DISCOVERABLE);
   }
+}
+
+void bt_a2dp_sink_disable(void) {
+  if (!s_bt_enabled) {
+    return;
+  }
+  ESP_LOGI(TAG, "Disabling Bluetooth controller for WiFi coexistence");
+
+  // Stop I2S task if running
+  if (s_i2s_task_running) {
+    i2s_task_stop();
+  }
+
+  // Disable Bluedroid
+  esp_bluedroid_disable();
+
+  // Disable BT controller
+  esp_bt_controller_disable();
+
+  s_bt_enabled = false;
+  ESP_LOGI(TAG, "Bluetooth controller disabled");
+}
+
+void bt_a2dp_sink_enable(void) {
+  if (s_bt_enabled) {
+    return;
+  }
+  ESP_LOGI(TAG, "Re-enabling Bluetooth controller");
+
+  // Re-enable BT controller
+  esp_err_t err = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to enable BT controller: %s", esp_err_to_name(err));
+    return;
+  }
+
+  // Re-enable Bluedroid
+  err = esp_bluedroid_enable();
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to enable Bluedroid: %s", esp_err_to_name(err));
+    return;
+  }
+
+  // Restore discoverable state
+  if (s_bt_discoverable) {
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+  }
+
+  s_bt_enabled = true;
+  ESP_LOGI(TAG, "Bluetooth controller re-enabled");
+}
+
+bool bt_a2dp_sink_is_enabled(void) {
+  return s_bt_enabled;
 }
