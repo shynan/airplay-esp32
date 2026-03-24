@@ -32,6 +32,7 @@
 // DAC I2C (optional)
 #define BOARD_I2C_SDA_GPIO CONFIG_DAC_I2C_SDA
 #define BOARD_I2C_SCL_GPIO CONFIG_DAC_I2C_SCL
+#define BOARD_I2C_PORT     0
 
 // Battery monitoring
 #define BOARD_BAT_CHANNEL CONFIG_BAT_CHANNEL
