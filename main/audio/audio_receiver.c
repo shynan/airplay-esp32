@@ -472,6 +472,12 @@ void audio_receiver_set_deferred_flush(uint32_t flush_until_ts) {
            flush_until_ts);
 }
 
+void audio_receiver_set_post_flush(void) {
+  receiver.timing.post_flush = true;
+  receiver.timing.post_flush_start_us = 0;
+  ESP_LOGI(TAG, "Post flush mode enabled");
+}
+
 void audio_receiver_pause(void) {
   // Stop the consumer.  The receiver tasks keep running so the audio buffer
   // continues to fill with pre-buffered audio — TCP back-pressure naturally

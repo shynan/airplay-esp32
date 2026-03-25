@@ -4,6 +4,7 @@
 
 #include "audio_timing.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "ntp_clock.h"
@@ -343,29 +344,33 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
       if ((int32_t)(hdr->rtp_timestamp - timing->flush_until_ts) >= 0) {
         ESP_LOGI(TAG,
                  "Deferred flush triggered at ts=%" PRIu32 " (until_ts=%" PRIu32
-                 ")",
-                 hdr->rtp_timestamp, timing->flush_until_ts);
-        if (from_pending) {
-          timing->pending_valid = false;
-          timing->pending_frame_len = 0;
-        } else {
-          audio_buffer_return(buffer, item);
-        }
+                 "), %d old frames flushed",
+                 hdr->rtp_timestamp, timing->flush_until_ts,
+                 audio_buffer_get_frame_count(buffer));
+        // This frame is from the new track (timestamp >= boundary).
+        // Flush remaining old frames, but keep this new frame.
         audio_buffer_flush(buffer);
         timing->deferred_flush_pending = false;
         timing->playout_started = false;
         timing->ready_time_us = 0;
         timing->consecutive_early_frames = 0;
         timing->consecutive_late_frames = 0;
-        // post_flush = true so the first frame of the next track plays
-        // immediately rather than waiting out the phone's pre-buffer window.
+        timing->consecutive_early_frames = 0;
+        timing->consecutive_late_frames = 0;
+        // post_flush = true so new frames play immediately.
         timing->post_flush = true;
         timing->post_flush_start_us = 0;
-        return 0;
+        // Fall through to play this new frame (don't return).
       }
     }
 
     // Handle early/late frames based on anchor timing.
+    //
+    // Skip timing checks when:
+    //  1. post_flush is active (seek/track change in progress), OR
+    //  2. deferred_flush_pending is true (waiting for flush boundary).
+    // In both cases, the old anchor is stale for incoming frames, so timing
+    // checks would incorrectly classify them as early/late.
     //
     // post_flush bypasses ALL timing checks (early and late) and plays every
     // frame unconditionally.  This mirrors shairport-sync's
@@ -375,7 +380,8 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
     // Enforcing timing here causes silence or cascading re-flushes.
     // post_flush clears only when a frame is genuinely on-time, at which point
     // the anchor has settled and normal timing can re-engage.
-    if (timing->anchor_valid && format->sample_rate > 0) {
+    if (timing->anchor_valid && format->sample_rate > 0 &&
+        !timing->deferred_flush_pending) {
       int64_t early_us = 0;
       if (compute_early_us(timing, format, hdr->rtp_timestamp, sync_mode,
                            &early_us)) {
@@ -430,8 +436,21 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
           if ((early_us >= -TIMING_THRESHOLD_US &&
                early_us <= TIMING_THRESHOLD_US) ||
               flush_elapsed >= POST_FLUSH_TIMEOUT_US) {
-            ESP_LOGI(TAG, "post_flush done: early=%lld ms, elapsed=%lld ms",
-                     early_us / 1000LL, flush_elapsed / 1000LL);
+            if (flush_elapsed >= POST_FLUSH_TIMEOUT_US &&
+                (early_us < -TIMING_THRESHOLD_US ||
+                 early_us > TIMING_THRESHOLD_US)) {
+              // Timeout elapsed but frame is still not on-time.
+              // The anchor is stale (e.g., long pause, track change).
+              // Invalidate it so we wait for a fresh anchor from the sender.
+              ESP_LOGI(TAG,
+                       "post_flush timeout with stale anchor (early=%lld ms), "
+                       "invalidating anchor",
+                       early_us / 1000LL);
+              timing->anchor_valid = false;
+            } else {
+              ESP_LOGI(TAG, "post_flush done: early=%lld ms, elapsed=%lld ms",
+                       early_us / 1000LL, flush_elapsed / 1000LL);
+            }
             timing->post_flush = false;
             timing->post_flush_start_us = 0;
           }
@@ -492,9 +511,11 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
             //     frames one-by-one over several seconds; bulk flush instead.
             ESP_LOGW(TAG,
                      "Bulk flush: frame %lld ms late, consecutive_late=%d, "
-                     "flushing %d stale frames",
+                     "flushing %d stale frames, heap: free=%lu internal=%lu",
                      -early_us / 1000LL, timing->consecutive_late_frames,
-                     audio_buffer_get_frame_count(buffer));
+                     audio_buffer_get_frame_count(buffer),
+                     (unsigned long)esp_get_free_heap_size(),
+                     (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
             if (from_pending) {
               timing->pending_valid = false;
               timing->pending_frame_len = 0;
@@ -505,6 +526,11 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
             timing->playout_started = false;
             timing->ready_time_us = 0;
             timing->consecutive_late_frames = 0;
+            timing->consecutive_early_frames = 0;
+            // Enter post_flush mode so new frames play immediately without
+            // being rejected by the stale anchor.
+            timing->post_flush = true;
+            timing->post_flush_start_us = 0;
             if (stats) {
               stats->late_frames++;
             }

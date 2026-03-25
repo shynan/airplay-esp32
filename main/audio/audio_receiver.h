@@ -137,6 +137,13 @@ void audio_receiver_seek_flush(void);
 void audio_receiver_set_deferred_flush(uint32_t flush_until_ts);
 
 /**
+ * Set post_flush mode so frames play immediately without timing checks.
+ * Used after resume from pause: the new anchor points to current time,
+ * but buffered frames have older timestamps and would be rejected as "late".
+ */
+void audio_receiver_set_post_flush(void);
+
+/**
  * Pause playback while preserving the timing anchor.
  * Flushes the audio buffer and resets playback-start state, but does NOT
  * call audio_timing_reset() so the anchor remains valid.  The pause start
