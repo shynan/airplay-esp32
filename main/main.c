@@ -188,18 +188,27 @@ static void on_airplay_client_event(rtsp_event_t event,
   (void)data;
   (void)user_data;
   if (bt_a2dp_sink_is_connected()) {
+    ESP_LOGI(TAG, "BT connected, skipping AirPlay event handling");
     return;
   }
   switch (event) {
   case RTSP_EVENT_CLIENT_CONNECTED:
     ESP_LOGI(TAG, "AirPlay client connected — disabling BT controller");
     // Disable BT controller completely to eliminate RF interference
-    bt_a2dp_sink_disable();
+    if (bt_a2dp_sink_is_enabled()) {
+      bt_a2dp_sink_disable();
+    } else {
+      ESP_LOGI(TAG, "BT controller already disabled");
+    }
     break;
   case RTSP_EVENT_DISCONNECTED:
     ESP_LOGI(TAG, "AirPlay client disconnected — re-enabling BT controller");
     // Re-enable BT controller
-    bt_a2dp_sink_enable();
+    if (!bt_a2dp_sink_is_enabled()) {
+      bt_a2dp_sink_enable();
+    } else {
+      ESP_LOGI(TAG, "BT controller already enabled");
+    }
     bt_a2dp_sink_set_discoverable(true);
     break;
   default:

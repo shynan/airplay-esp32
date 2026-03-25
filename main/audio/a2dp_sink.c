@@ -741,7 +741,9 @@ void bt_a2dp_sink_set_discoverable(bool discoverable) {
 }
 
 void bt_a2dp_sink_disable(void) {
+  ESP_LOGI(TAG, "bt_a2dp_sink_disable called, s_bt_enabled=%d", s_bt_enabled);
   if (!s_bt_enabled) {
+    ESP_LOGI(TAG, "BT already disabled, returning");
     return;
   }
   ESP_LOGI(TAG, "Disabling Bluetooth controller for WiFi coexistence");
@@ -752,17 +754,25 @@ void bt_a2dp_sink_disable(void) {
   }
 
   // Disable Bluedroid
-  esp_bluedroid_disable();
+  esp_err_t err = esp_bluedroid_disable();
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to disable Bluedroid: %s", esp_err_to_name(err));
+  }
 
   // Disable BT controller
-  esp_bt_controller_disable();
+  err = esp_bt_controller_disable();
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to disable BT controller: %s", esp_err_to_name(err));
+  }
 
   s_bt_enabled = false;
   ESP_LOGI(TAG, "Bluetooth controller disabled");
 }
 
 void bt_a2dp_sink_enable(void) {
+  ESP_LOGI(TAG, "bt_a2dp_sink_enable called, s_bt_enabled=%d", s_bt_enabled);
   if (s_bt_enabled) {
+    ESP_LOGI(TAG, "BT already enabled, returning");
     return;
   }
   ESP_LOGI(TAG, "Re-enabling Bluetooth controller");
