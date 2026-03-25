@@ -781,6 +781,12 @@ void bt_a2dp_sink_enable(void) {
     return;
   }
 
+  // Restore device name (must be done after Bluedroid is enabled)
+  if (s_bt_device_name[0] != '\0') {
+    esp_bt_gap_set_device_name(s_bt_device_name);
+    ESP_LOGI(TAG, "Restored BT device name: %s", s_bt_device_name);
+  }
+
   // Restore discoverable state
   if (s_bt_discoverable) {
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
