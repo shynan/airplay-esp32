@@ -1474,11 +1474,19 @@ static void handle_setrateanchortime(int socket, rtsp_conn_t *conn,
     ESP_LOGI(TAG, "SETRATEANCHORTIME: rate=0 -> PAUSING");
     conn->stream_paused = true;
     audio_receiver_pause();
-    audio_output_flush();
+    // Do NOT call audio_output_flush() here. Flushing clears the I2S DMA
+    // buffer (~46ms), causing a gap on resume that must be refilled.
+    // Instead, let playback_task output silence while paused.
     rtsp_events_emit(RTSP_EVENT_PAUSED, NULL);
   } else {
     ESP_LOGI(TAG, "SETRATEANCHORTIME: rate=%.1f -> RESUMING (was_paused=%d)",
              rate, conn->stream_paused);
+    if (conn->stream_paused) {
+      // Resume from pause: set post_flush so buffered frames play immediately.
+      // The new anchor points to current time, but buffered frames have
+      // older timestamps. Without post_flush, they would be rejected as "late".
+      audio_receiver_set_post_flush();
+    }
     conn->stream_paused = false;
     audio_receiver_set_playing(true);
     rtsp_events_emit(RTSP_EVENT_PLAYING, NULL);
