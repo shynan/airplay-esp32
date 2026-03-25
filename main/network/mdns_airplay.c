@@ -116,3 +116,11 @@ void mdns_airplay_init(void) {
     ESP_LOGE(TAG, "Failed to add _raop._tcp service: %s", esp_err_to_name(err));
   }
 }
+
+void mdns_airplay_refresh(void) {
+  // Re-announce mDNS services to refresh records after network reconnection
+  // This helps iOS discover the device after WiFi reconnects
+  ESP_LOGI(TAG, "Refreshing mDNS announcements");
+  mdns_service_txt_set("_airplay", "_tcp", NULL, 0);
+  mdns_service_txt_set("_raop", "_tcp", NULL, 0);
+}

@@ -174,6 +174,8 @@ static void on_bt_state_changed(bool connected) {
     // Re-enable AirPlay
     if (ethernet_is_connected() || wifi_is_connected()) {
       start_airplay_services();
+      // Refresh mDNS after WiFi reconnects so iOS can discover the device
+      mdns_airplay_refresh();
     }
     // Make BT discoverable again
     bt_a2dp_sink_set_discoverable(true);
