@@ -158,7 +158,11 @@ static void on_bt_state_changed(bool connected) {
     }
   } else {
     ESP_LOGI(TAG, "BT disconnected — restarting WiFi and AirPlay");
-    // Restart WiFi first (if it was running before)
+    // Re-enable BT controller if it was disabled
+    if (!bt_a2dp_sink_is_enabled()) {
+      bt_a2dp_sink_enable();
+    }
+    // Restart WiFi if it was running before
     if (s_wifi_was_connected && !ethernet_is_connected()) {
       ESP_LOGI(TAG, "Restarting WiFi");
       wifi_init_apsta(NULL, NULL);
@@ -171,11 +175,6 @@ static void on_bt_state_changed(bool connected) {
     if (ethernet_is_connected() || wifi_is_connected()) {
       start_airplay_services();
     }
-    // Re-enable BT controller AFTER WiFi and AirPlay are up
-    // This ensures proper initialization order
-    if (!bt_a2dp_sink_is_enabled()) {
-      bt_a2dp_sink_enable();
-    }
     // Make BT discoverable again
     bt_a2dp_sink_set_discoverable(true);
   }
@@ -186,8 +185,7 @@ static void on_airplay_client_event(rtsp_event_t event,
                                     void *user_data) {
   (void)data;
   (void)user_data;
-  // Skip event handling if BT is active or AirPlay not started
-  if (bt_a2dp_sink_is_connected() || !s_airplay_started) {
+  if (bt_a2dp_sink_is_connected()) {
     return;
   }
   switch (event) {
