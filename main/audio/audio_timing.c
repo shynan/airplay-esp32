@@ -4,6 +4,7 @@
 
 #include "audio_timing.h"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "ntp_clock.h"
@@ -510,9 +511,11 @@ size_t audio_timing_read(audio_timing_t *timing, audio_buffer_t *buffer,
             //     frames one-by-one over several seconds; bulk flush instead.
             ESP_LOGW(TAG,
                      "Bulk flush: frame %lld ms late, consecutive_late=%d, "
-                     "flushing %d stale frames",
+                     "flushing %d stale frames, heap: free=%lu internal=%lu",
                      -early_us / 1000LL, timing->consecutive_late_frames,
-                     audio_buffer_get_frame_count(buffer));
+                     audio_buffer_get_frame_count(buffer),
+                     (unsigned long)esp_get_free_heap_size(),
+                     (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
             if (from_pending) {
               timing->pending_valid = false;
               timing->pending_frame_len = 0;

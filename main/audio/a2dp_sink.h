@@ -45,3 +45,21 @@ bool bt_a2dp_sink_is_connected(void);
  * @param discoverable true to allow new BT connections, false to block them
  */
 void bt_a2dp_sink_set_discoverable(bool discoverable);
+
+/**
+ * Disable Bluetooth controller completely (for WiFi coexistence).
+ * Stops all BT activity and disables the controller.
+ * Call bt_a2dp_sink_enable() to re-enable.
+ */
+void bt_a2dp_sink_disable(void);
+
+/**
+ * Re-enable Bluetooth controller after bt_a2dp_sink_disable().
+ * Restarts the controller and makes device discoverable.
+ */
+void bt_a2dp_sink_enable(void);
+
+/**
+ * Check if Bluetooth controller is enabled.
+ */
+bool bt_a2dp_sink_is_enabled(void);

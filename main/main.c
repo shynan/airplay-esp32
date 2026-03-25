@@ -52,6 +52,11 @@ static void start_airplay_services(void) {
     ESP_ERROR_CHECK(audio_output_init());
     mdns_airplay_init();
     s_airplay_infrastructure_ready = true;
+  } else {
+    // Infrastructure already initialized - flush and reset for clean restart
+    // This is needed when switching from Bluetooth back to AirPlay
+    ESP_LOGI(TAG, "Flushing audio buffers for AirPlay restart");
+    audio_receiver_flush();
   }
 
   audio_output_start();
@@ -138,15 +143,40 @@ static void network_monitor_task(void *pvParameters) {
 }
 
 #ifdef CONFIG_BT_A2DP_ENABLE
+static bool s_wifi_was_connected = false;  // Track WiFi state before BT
+
 static void on_bt_state_changed(bool connected) {
   if (connected) {
-    ESP_LOGI(TAG, "BT connected — disabling AirPlay");
+    ESP_LOGI(TAG, "BT connected — stopping WiFi and AirPlay for clean coexistence");
+    // Stop AirPlay services
     stop_airplay_services();
+    // Stop WiFi to eliminate RF interference (BT and WiFi share same radio)
+    s_wifi_was_connected = wifi_is_connected();
+    if (s_wifi_was_connected) {
+      ESP_LOGI(TAG, "Stopping WiFi to eliminate BT/WiFi interference");
+      wifi_stop();
+    }
   } else {
-    ESP_LOGI(TAG, "BT disconnected — re-enabling AirPlay");
+    ESP_LOGI(TAG, "BT disconnected — restarting WiFi and AirPlay");
+    // Re-enable BT controller if it was disabled
+    if (!bt_a2dp_sink_is_enabled()) {
+      bt_a2dp_sink_enable();
+    }
+    // Restart WiFi if it was running before
+    if (s_wifi_was_connected && !ethernet_is_connected()) {
+      ESP_LOGI(TAG, "Restarting WiFi");
+      wifi_init_apsta(NULL, NULL);
+      // Wait for WiFi to reconnect
+      if (settings_has_wifi_credentials()) {
+        wifi_wait_connected(10000);
+      }
+    }
+    // Re-enable AirPlay
     if (ethernet_is_connected() || wifi_is_connected()) {
       start_airplay_services();
     }
+    // Make BT discoverable again
+    bt_a2dp_sink_set_discoverable(true);
   }
 }
 
@@ -160,11 +190,14 @@ static void on_airplay_client_event(rtsp_event_t event,
   }
   switch (event) {
   case RTSP_EVENT_CLIENT_CONNECTED:
-    ESP_LOGI(TAG, "AirPlay client connected — disabling BT");
-    bt_a2dp_sink_set_discoverable(false);
+    ESP_LOGI(TAG, "AirPlay client connected — disabling BT controller");
+    // Disable BT controller completely to eliminate RF interference
+    bt_a2dp_sink_disable();
     break;
   case RTSP_EVENT_DISCONNECTED:
-    ESP_LOGI(TAG, "AirPlay client disconnected — enabling BT");
+    ESP_LOGI(TAG, "AirPlay client disconnected — re-enabling BT controller");
+    // Re-enable BT controller
+    bt_a2dp_sink_enable();
     bt_a2dp_sink_set_discoverable(true);
     break;
   default:
@@ -194,6 +227,7 @@ void app_main(void) {
   }
 
   // Try ethernet first
+#ifndef CONFIG_BT_ONLY_MODE
   bool eth_available = false;
   err = ethernet_init();
   if (err == ESP_OK) {
@@ -233,15 +267,22 @@ void app_main(void) {
   } else {
     ESP_LOGI(TAG, "Ethernet connected — skipping WiFi");
   }
+#endif
 
   // Start services that work on any interface
+#ifndef CONFIG_BT_ONLY_MODE
   web_server_start(80);
   xTaskCreate(network_monitor_task, "net_mon", 4096, NULL, 5, NULL);
+#endif
 
+#ifndef CONFIG_BT_ONLY_MODE
   bool connected = eth_available || wifi_is_connected();
   if (connected) {
     start_airplay_services();
   }
+#else
+  ESP_LOGI(TAG, "Bluetooth-only mode - AirPlay disabled");
+#endif
 
 #ifdef CONFIG_BT_A2DP_ENABLE
   // Initialize Bluetooth A2DP Sink
@@ -252,7 +293,14 @@ void app_main(void) {
     if (bt_err != ESP_OK) {
       ESP_LOGE(TAG, "BT A2DP init failed: %s", esp_err_to_name(bt_err));
     } else {
+#ifdef CONFIG_BT_ONLY_MODE
+      // In BT-only mode, initialize audio output (I2S) for Bluetooth
+      // Do NOT start playback task - BT has its own I2S writer task
+      ESP_LOGI(TAG, "Initializing audio output for Bluetooth-only mode");
+      audio_output_init();
+#else
       rtsp_events_register(on_airplay_client_event, NULL);
+#endif
     }
   }
 #endif
