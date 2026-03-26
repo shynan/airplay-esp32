@@ -7,6 +7,7 @@
 #include "hap.h"
 #include "mdns_airplay.h"
 #include "nvs_flash.h"
+#include "ota.h"
 #include "ptp_clock.h"
 #include "rtsp_server.h"
 #include "settings.h"
@@ -228,6 +229,7 @@ void app_main(void) {
   }
   ESP_ERROR_CHECK(ret);
   ESP_ERROR_CHECK(settings_init());
+  ota_manager_init();  // Mark firmware as valid if rollback protection enabled
   led_init();
   display_init();
 
