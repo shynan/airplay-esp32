@@ -797,6 +797,17 @@ void bt_a2dp_sink_enable(void) {
     ESP_LOGI(TAG, "Restored BT device name: %s", s_bt_device_name);
   }
 
+  // Re-initialize GAP and security settings (needed after disable/enable cycle)
+  esp_bt_gap_register_callback(bt_gap_cb);
+
+#ifdef CONFIG_BT_SSP_ENABLED
+  // Restore SSP Just Works mode
+  esp_bt_sp_param_t param_type = ESP_BT_SP_IOCAP_MODE;
+  esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_NONE;
+  esp_bt_gap_set_security_param(param_type, &iocap, sizeof(uint8_t));
+  ESP_LOGI(TAG, "SSP Just Works mode restored");
+#endif
+
   // Restore discoverable state
   if (s_bt_discoverable) {
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);

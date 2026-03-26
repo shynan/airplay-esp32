@@ -202,12 +202,13 @@ static void on_airplay_client_event(rtsp_event_t event,
     }
     break;
   case RTSP_EVENT_DISCONNECTED:
-    ESP_LOGI(TAG, "AirPlay client disconnected — re-enabling BT controller");
-    // Re-enable BT controller
+    // This event may fire multiple times (once per client slot)
+    // Only re-enable BT once
     if (!bt_a2dp_sink_is_enabled()) {
+      ESP_LOGI(TAG, "AirPlay client disconnected — re-enabling BT controller");
       bt_a2dp_sink_enable();
     } else {
-      ESP_LOGI(TAG, "BT controller already enabled");
+      ESP_LOGI(TAG, "AirPlay client disconnected — BT already enabled");
     }
     bt_a2dp_sink_set_discoverable(true);
     break;
