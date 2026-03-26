@@ -753,6 +753,13 @@ void bt_a2dp_sink_disable(void) {
     i2s_task_stop();
   }
 
+  // Deinitialize A2DP Sink
+  esp_a2d_sink_deinit();
+
+  // Deinitialize AVRC
+  esp_avrc_ct_deinit();
+  esp_avrc_tg_deinit();
+
   // Disable Bluedroid
   esp_err_t err = esp_bluedroid_disable();
   if (err != ESP_OK) {
@@ -766,6 +773,7 @@ void bt_a2dp_sink_disable(void) {
   }
 
   s_bt_enabled = false;
+  s_connected = false;
   ESP_LOGI(TAG, "Bluetooth controller disabled");
 }
 
@@ -808,13 +816,29 @@ void bt_a2dp_sink_enable(void) {
   ESP_LOGI(TAG, "SSP Just Works mode restored");
 #endif
 
+  // Re-initialize AVRC Controller
+  esp_avrc_ct_register_callback(bt_avrc_ct_cb);
+  esp_avrc_ct_init();
+
+  // Re-initialize AVRC Target
+  esp_avrc_tg_register_callback(bt_avrc_tg_cb);
+  esp_avrc_tg_init();
+  esp_avrc_rn_evt_cap_mask_t evt_set = {0};
+  evt_set.bits = (1 << ESP_AVRC_RN_VOLUME_CHANGE);
+  esp_avrc_tg_set_rn_evt_cap(&evt_set);
+
+  // Re-initialize A2DP Sink
+  esp_a2d_register_callback(bt_a2dp_cb);
+  esp_a2d_sink_register_data_callback(bt_a2dp_data_cb);
+  esp_a2d_sink_init();
+
   // Restore discoverable state
   if (s_bt_discoverable) {
     esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
   }
 
   s_bt_enabled = true;
-  ESP_LOGI(TAG, "Bluetooth controller re-enabled");
+  ESP_LOGI(TAG, "Bluetooth controller re-enabled with A2DP/AVRC profiles");
 }
 
 bool bt_a2dp_sink_is_enabled(void) {
